@@ -1,4 +1,4 @@
-name: Build helpers
+name: Build helper
 on:
   push:
     branches: [main]
@@ -7,15 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - helper: com.fce.onlinemedia.tidal
-            player: com.aspiro.tidal
-            label: "Auxio (car link)"
-          - helper: com.fce.onlinemedia.deezer
-            player: deezer.android.app
-            label: "Retro (car link)"
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -36,14 +29,22 @@ jobs:
       - name: Build
         run: >
           gradle --no-daemon assembleDebug
-          -PhelperId=${{ matrix.helper }}
-          -PplayerId=${{ matrix.player }}
-          "-Plabel=${{ matrix.label }}"
+          -PhelperId=com.fce.onlinemedia.tidal
+          -PplayerId=com.aspiro.tidal
+          "-Plabel=Auxio (car link)"
 
       - name: Rename APK
-        run: mv app/build/outputs/apk/debug/app-debug.apk ${{ matrix.helper }}.apk
+        run: mv app/build/outputs/apk/debug/app-debug.apk Auxio-car-link.apk
 
-      - uses: actions/upload-artifact@v4
+      - name: Publish release (always the same one)
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ matrix.helper }}
-          path: ${{ matrix.helper }}.apk
+          tag_name: helper
+          name: Auxio car link helper
+          body: |
+            Lets BYD's media app use Auxio for BYD (`com.aspiro.tidal`) as a car media source.
+            Package: `com.fce.onlinemedia.tidal`. Hidden from the app launcher.
+
+            Install: `adb install -r Auxio-car-link.apk`
+          files: Auxio-car-link.apk
+          make_latest: true
