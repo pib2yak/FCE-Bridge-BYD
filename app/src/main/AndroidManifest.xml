@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Needed on Android 11+ to see and bind to the player -->
+    <queries>
+        <package android:name="${playerPackage}" />
+        <intent>
+            <action android:name="android.media.browse.MediaBrowserService" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_media_play"
+        android:label="${appLabel}">
+
+        <!-- BYD only accepts the helper if it has a launcher entry.
+             Tapping it (or the BYD media widget) opens the player. -->
+        <activity
+            android:name=".LaunchActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The exact class name BYD's media app binds to -->
+        <service
+            android:name="com.fce.onlinemedia.voice.CarMediaTransportService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <!-- Serves album art so BYD's media app can load it -->
+        <provider
+            android:name=".ArtProvider"
+            android:authorities="${applicationId}.art"
+            android:exported="true" />
+    </application>
+</manifest>
