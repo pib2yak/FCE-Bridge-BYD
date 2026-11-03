@@ -1,0 +1,49 @@
+name: Build helpers
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - helper: com.fce.onlinemedia.tidal
+            player: com.aspiro.tidal
+            label: "Auxio (car link)"
+          - helper: com.fce.onlinemedia.deezer
+            player: deezer.android.app
+            label: "Retro (car link)"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Signing key
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > ~/.android/debug.keystore
+
+      - name: Build
+        run: >
+          gradle --no-daemon assembleDebug
+          -PhelperId=${{ matrix.helper }}
+          -PplayerId=${{ matrix.player }}
+          "-Plabel=${{ matrix.label }}"
+
+      - name: Rename APK
+        run: mv app/build/outputs/apk/debug/app-debug.apk ${{ matrix.helper }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.helper }}
+          path: ${{ matrix.helper }}.apk
