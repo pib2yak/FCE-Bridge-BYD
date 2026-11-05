@@ -21,7 +21,7 @@ This repo builds everything from one place:
 | `retro.yml` | [Retro Music](https://github.com/RetroMusicPlayer/RetroMusicPlayer) as `deezer.android.app` | `retro-byd-<version>-<build>` |
 | `helpers.yml` | Both car link helpers, from `app/` in this repo | `helper` (one release, always updated) |
 
-The player workflows build from each project's **latest official stable release**, check for a new release **every week**, and also run when their workflow file changes. The helpers rebuild whenever the helper code changes.
+The player workflows build from each project's **latest official stable release**, check for a new release **every week**, and also run when their workflow file changes. The helpers rebuild whenever the helper code changes. Personally, I have found that Retro Music Player works best overall, although the currently playing UI is inferior to Auxio.
 
 ## How it works
 
@@ -86,7 +86,7 @@ The player must expose a standard Android `MediaBrowserService`, because that's 
 
 | Vehicle | DiLink Version | System Version | Auxio (Tidal slot) | Retro Music (Deezer slot) |
 |---|---|---|---|---|
-| BYD Sealion 7 |DiLink 5|Yet to find| ✅ Working | ⏳ Not yet tested |
+| BYD Sealion 7 |DiLink 5|Yet to find| ✅ Working | ✅ Working |
 
 If you try it on another BYD model, please open an issue with the result.
 
@@ -123,7 +123,7 @@ While a song plays, look for `isInstall = true` for the helper, `setMusicEngine 
 
 ## Known issues
 
-- **No folder selection.** The head unit has no system folder picker, so that setting can't be used. Auxio & Retro uses Android's full system scan instead.
+- **No folder selection.** The head unit has no system folder picker, so in Auxio, this setting can't be used. Auxio uses Android's full system scan instead. Retro can selectively only scan the music folder.
 - **Library reload on start (Auxio).** Auxio rebuilds its library each time it launches, so there's a short delay after the car starts. Playback position is remembered.
 - **Playback Position absent on cluster**. It doesn't show how far through a song you are on the cluster. This has yet to be resolved.
 - **Separate apps.** The renamed players are separate from the regular versions, so they start with an empty library and no playlists.
