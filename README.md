@@ -1,3 +1,7 @@
+## AI DISCLOSURE
+
+This project was created entirely with AI. The reverse-engineering of BYD's media system, the car link helper app, the GitHub Actions build workflows and this README were all produced by **Claude Opus 5.5** (via Microsoft Copilot), with testing on the vehicle done by me (repo owner).
+
 # Media Bridge for BYD
 
 Use open-source music players as **built-in media sources** on BYD head units, with no root needed.
@@ -119,8 +123,9 @@ While a song plays, look for `isInstall = true` for the helper, `setMusicEngine 
 
 ## Known issues
 
-- **No folder selection (Auxio).** The head unit has no system folder picker, so Auxio's "Music folders" setting can't be used. Auxio uses Android's full system scan instead.
+- **No folder selection.** The head unit has no system folder picker, so that setting can't be used. Auxio & Retro uses Android's full system scan instead.
 - **Library reload on start (Auxio).** Auxio rebuilds its library each time it launches, so there's a short delay after the car starts. Playback position is remembered.
+- **Playback Position absent on cluster**. It doesn't show how far through a song you are on the cluster. This has yet to be resolved.
 - **Separate apps.** The renamed players are separate from the regular versions, so they start with an empty library and no playlists.
 - **Renamed-package side effects.** A feature that relies on the player's original package name, such as a home-screen widget, could break. Playback shouldn't be affected.
 - **The helper may appear in the app launcher.** BYD needs the helper to have a launchable entry.
