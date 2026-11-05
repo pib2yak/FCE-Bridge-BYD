@@ -84,9 +84,9 @@ The player must expose a standard Android `MediaBrowserService`, because that's 
 
 ## Tested vehicles
 
-| Vehicle | Auxio (Tidal slot) | Retro Music (Deezer slot) |
-|---|---|---|
-| BYD Sealion 7 | ✅ Working | ⏳ Not yet tested |
+| Vehicle | DiLink Version | System Version | Auxio (Tidal slot) | Retro Music (Deezer slot) |
+|---|---|---|---|---|
+| BYD Sealion 7 |DiLink 5|Yet to find| ✅ Working | ⏳ Not yet tested |
 
 If you try it on another BYD model, please open an issue with the result.
 
