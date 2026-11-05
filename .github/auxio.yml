@@ -1,0 +1,172 @@
+name: Auxio for BYD
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/auxio.yml"]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * 0"   # weekly (Sunday 18:00 UTC = Monday 4am in Cairns)
+
+env:
+  UPSTREAM: OxygenCobalt/Auxio
+  NEW_ID: com.aspiro.tidal
+  APP_NAME: Auxio for BYD
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+      build: ${{ steps.latest.outputs.build }}
+    steps:
+      - name: Find latest stable Auxio release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)
+          echo "Latest stable Auxio release: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          BUILD=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if gh api "repos/${{ github.repository }}/releases" --paginate -q '.[].tag_name' | grep -q "^auxio-byd-$TAG-"; then
+              BUILD=false
+              echo "Already built $TAG, nothing to do."
+            fi
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+
+      - name: Get Auxio ${{ needs.check.outputs.tag }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ needs.check.outputs.tag }}
+
+      - name: Get submodules at the versions this release pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for path in media musikr/src/main/cpp/taglib; do
+            INFO=$(gh api "repos/$UPSTREAM/contents/$path?ref=$TAG")
+            URL=$(echo "$INFO" | jq -r .submodule_git_url)
+            SHA=$(echo "$INFO" | jq -r .sha)
+            echo "$path -> $URL @ $SHA"
+            rm -rf "$path"
+            git clone "$URL" "$path"
+            git -C "$path" checkout "$SHA"
+            git -C "$path" submodule update --init --recursive
+          done
+          test -f media/core_settings.gradle || { echo "media is missing core_settings.gradle"; exit 1; }
+
+      - name: Read Auxio version
+        run: |
+          F=app/build.gradle
+          if [ ! -f "$F" ]; then F=app/build.gradle.kts; fi
+          VER=$(grep -m1 -oE 'versionName *=? *"[^"]+"' "$F" | grep -oE '"[^"]+"' | tr -d '"')
+          CODE=$(grep -m1 -oE 'versionCode *=? *[0-9]+' "$F" | grep -oE '[0-9]+')
+          if [ -z "$VER" ]; then VER="$TAG"; fi
+          if [ -z "$CODE" ]; then CODE="?"; fi
+          echo "AUXIO_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "AUXIO_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "AUXIO_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "Auxio version: $VER (code $CODE) from tag $TAG"
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "jetbrains"
+          cache: gradle
+
+      - name: Install the NDK
+        run: |
+          NDK=$(grep -rhoiE 'ndk[_a-z]*\s*[=:]?\s*["'"'"'][0-9]+\.[0-9]+\.[0-9]+["'"'"']' \
+                --include='*.gradle' --include='*.kts' --include='*.toml' . 2>/dev/null \
+                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          if [ -z "$NDK" ]; then NDK=27.2.12479018; fi
+          echo "Installing NDK $NDK"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK" >> "$GITHUB_ENV"
+
+      - name: Signing key
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > ~/.android/debug.keystore
+
+      - name: Change package name and signing
+        run: |
+          F=app/build.gradle
+          if [ ! -f "$F" ]; then F=app/build.gradle.kts; fi
+          printf '%s\n' \
+            '' \
+            'android {' \
+            "    defaultConfig { applicationId = \"$NEW_ID\" }" \
+            '    signingConfigs {' \
+            '        create("byd") {' \
+            '            storeFile = file(System.getenv("HOME") + "/.android/debug.keystore")' \
+            '            storePassword = "android"' \
+            '            keyAlias = "androiddebugkey"' \
+            '            keyPassword = "android"' \
+            '        }' \
+            '    }' \
+            '    buildTypes {' \
+            '        getByName("release") { signingConfig = signingConfigs.getByName("byd") }' \
+            '    }' \
+            '}' >> "$F"
+          tail -n 16 "$F"
+
+      - name: Set app name
+        run: |
+          LABEL=$(grep -oE 'android:label="@string/[A-Za-z0-9_]+"' app/src/main/AndroidManifest.xml | head -1 | sed 's/.*@string\///; s/"$//')
+          echo "App name string: $LABEL"
+          grep -rl "name=\"$LABEL\"" app/src/*/res/values*/ | while read f; do
+            sed -i -E "s|(<string name=\"$LABEL\"[^>]*>)[^<]*(</string>)|\1${APP_NAME}\2|" "$f"
+            echo "Updated $f"
+          done
+
+      - name: Create any missing ProGuard files
+        run: |
+          for d in media/libraries/*/; do
+            f="${d}build.gradle"
+            if [ ! -f "$f" ]; then continue; fi
+            for p in $(grep -E "consumerProguardFiles" "$f" | grep -oE "['\"][^'\"]+['\"]" | tr -d "'\""); do
+              if [ ! -f "${d}${p}" ]; then echo "Creating empty ${d}${p}"; touch "${d}${p}"; fi
+            done
+          done
+
+      - name: Build (release)
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon app:assembleRelease
+
+      - name: Rename APK
+        run: |
+          ls -la app/build/outputs/apk/release/
+          mv "$(ls app/build/outputs/apk/release/*.apk | head -1)" Auxio-for-BYD.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auxio-byd-${{ env.TAG }}-${{ github.run_number }}
+          name: Auxio for BYD ${{ env.AUXIO_VERSION }} (build ${{ github.run_number }})
+          body: |
+            Built from Auxio **${{ env.AUXIO_VERSION }}** (release `${{ env.TAG }}`, version code ${{ env.AUXIO_CODE }}, commit `${{ env.AUXIO_COMMIT }}`).
+
+            Package: `com.aspiro.tidal` (Tidal slot). Needs `Auxio-car-link.apk` from the **Car link helpers** release.
+
+            Install: `adb install -r Auxio-for-BYD.apk`
+          target_commitish: ${{ github.sha }}
+          files: Auxio-for-BYD.apk
+          make_latest: false

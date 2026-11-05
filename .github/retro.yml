@@ -1,0 +1,156 @@
+name: Retro Music for BYD
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/retro.yml"]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * 0"   # weekly (Sunday 18:00 UTC = Monday 4am in Cairns)
+
+env:
+  UPSTREAM: RetroMusicPlayer/RetroMusicPlayer
+  NEW_ID: deezer.android.app
+  APP_NAME: Retro Music for BYD
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+      build: ${{ steps.latest.outputs.build }}
+    steps:
+      - name: Find latest stable Retro release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)
+          echo "Latest stable Retro release: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          BUILD=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if gh api "repos/${{ github.repository }}/releases" --paginate -q '.[].tag_name' | grep -q "^retro-byd-$TAG-"; then
+              BUILD=false
+              echo "Already built $TAG, nothing to do."
+            fi
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - name: Get Retro ${{ needs.check.outputs.tag }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ needs.check.outputs.tag }}
+
+      - name: Show which Gradle this release uses
+        run: grep distributionUrl gradle/wrapper/gradle-wrapper.properties
+
+      - name: Read Retro version
+        run: |
+          F=app/build.gradle.kts
+          if [ ! -f "$F" ]; then F=app/build.gradle; fi
+          VER=$(grep -hoE 'versionName *=? *"[^"]+"' "$F" | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+          CODE=$(grep -hoE 'versionCode *=? *[0-9]+' "$F" | head -1 | grep -oE '[0-9]+')
+          if [ -z "$VER" ]; then VER="$TAG"; fi
+          if [ -z "$CODE" ]; then CODE="?"; fi
+          echo "RETRO_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "RETRO_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "RETRO_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "Retro version: $VER (code $CODE) from tag $TAG"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Signing key
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > ~/.android/debug.keystore
+
+      - name: Change package name and signing
+        run: |
+          F=app/build.gradle.kts
+          if [ ! -f "$F" ]; then F=app/build.gradle; fi
+          printf '%s\n' \
+            '' \
+            'android {' \
+            "    defaultConfig { applicationId = \"$NEW_ID\" }" \
+            '    lint {' \
+            '        checkReleaseBuilds = false' \
+            '        abortOnError = false' \
+            '    }' \
+            '    signingConfigs {' \
+            '        create("byd") {' \
+            '            storeFile = file(System.getenv("HOME") + "/.android/debug.keystore")' \
+            '            storePassword = "android"' \
+            '            keyAlias = "androiddebugkey"' \
+            '            keyPassword = "android"' \
+            '        }' \
+            '    }' \
+            '    buildTypes {' \
+            '        getByName("release") { signingConfig = signingConfigs.getByName("byd") }' \
+            '    }' \
+            '}' >> "$F"
+          tail -n 22 "$F"
+          echo "--- applicationId lines in the build file:"
+          grep -n "applicationId" "$F" || true
+
+      - name: Set app name
+        run: |
+          LABEL=$(grep -oE 'android:label="@string/[A-Za-z0-9_]+"' app/src/main/AndroidManifest.xml | head -1 | sed 's/.*@string\///; s/"$//')
+          echo "App name string: $LABEL"
+          grep -rl "name=\"$LABEL\"" app/src/*/res/values*/ | while read f; do
+            sed -i -E "s|(<string name=\"$LABEL\"[^>]*>)[^<]*(</string>)|\1${APP_NAME}\2|" "$f"
+            echo "Updated $f"
+          done
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon app:assemble
+
+      - name: Check and rename APK
+        run: |
+          APK=app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "Expected APK not found. Release APKs present:"
+            find app/build/outputs/apk -name '*.apk' | grep -i release
+            exit 1
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/aapt2" dump badging "$APK" | head -2
+          PKG=$("$BT/aapt2" dump badging "$APK" | grep -oP "^package: name='\K[^']+")
+          if [ "$PKG" != "$NEW_ID" ]; then
+            echo "Package is $PKG, expected $NEW_ID"
+            exit 1
+          fi
+          "$BT/apksigner" verify "$APK" && echo "Signature OK"
+          mv "$APK" Retro-for-BYD.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: retro-byd-${{ env.TAG }}-${{ github.run_number }}
+          name: Retro Music for BYD ${{ env.RETRO_VERSION }} (build ${{ github.run_number }})
+          body: |
+            Built from Retro Music **${{ env.RETRO_VERSION }}** (release `${{ env.TAG }}`, version code ${{ env.RETRO_CODE }}, commit `${{ env.RETRO_COMMIT }}`).
+
+            Package: `deezer.android.app` (Deezer slot). Needs `Retro-car-link.apk` from the **Car link helpers** release.
+
+            Install: `adb install -r Retro-for-BYD.apk`
+          target_commitish: ${{ github.sha }}
+          files: Retro-for-BYD.apk
+          make_latest: false

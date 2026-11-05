@@ -1,0 +1,82 @@
+name: Car link helpers
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - ".github/workflows/helpers.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - helper: com.fce.onlinemedia.tidal
+            player: com.aspiro.tidal
+            label: "Auxio (car link)"
+            file: Auxio-car-link.apk
+          - helper: com.fce.onlinemedia.deezer
+            player: deezer.android.app
+            label: "Retro (car link)"
+            file: Retro-car-link.apk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Signing key
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > ~/.android/debug.keystore
+
+      - name: Build
+        run: >
+          gradle --no-daemon assembleDebug
+          -PhelperId=${{ matrix.helper }}
+          -PplayerId=${{ matrix.player }}
+          "-Plabel=${{ matrix.label }}"
+
+      - name: Rename APK
+        run: mv app/build/outputs/apk/debug/app-debug.apk ${{ matrix.file }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.helper }}
+          path: ${{ matrix.file }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: apks
+          merge-multiple: true
+
+      - name: Publish release (always the same one)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: helper
+          name: Car link helpers
+          body: |
+            Lets BYD's media app use the renamed players as car media sources.
+            - `Auxio-car-link.apk` for Auxio for BYD (`com.aspiro.tidal`)
+            - `Retro-car-link.apk` for Retro Music for BYD (`deezer.android.app`)
+
+            Install: `adb install -r <file>.apk`
+          target_commitish: ${{ github.sha }}
+          files: apks/*.apk
+          make_latest: false
